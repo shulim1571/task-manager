@@ -178,7 +178,10 @@ db.auth.onAuthStateChange((_event, session) => {
   if (signedIn) {
     $('#user-email').textContent = session.user.email;
     loadTasks();
-    db.rpc('is_admin').then(({ data }) => { $('#admin-link').hidden = !data; });
+    db.rpc('my_role').then(({ data }) => {
+      $('#admin-link').hidden = !data || data === 'user';
+      $('#admin-link').textContent = data === 'manager' ? 'My team' : 'Admin';
+    });
   } else {
     $('#admin-link').hidden = true;
     tasks = [];
@@ -192,7 +195,9 @@ function showError(error) {
 }
 
 async function loadTasks() {
-  const { data, error } = await db.from('tasks').select('*').order('created_at', { ascending: false });
+  // Managers and super admins can read other people's tasks too; this page is only for your own.
+  const { data: { user } } = await db.auth.getUser();
+  const { data, error } = await db.from('tasks').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
   showError(error);
   if (!error) { tasks = data; render(); }
 }
