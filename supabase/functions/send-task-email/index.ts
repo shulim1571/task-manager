@@ -40,6 +40,21 @@ async function graphToken() {
   return data.access_token as string;
 }
 
+// Explains a Graph 403 using the permissions in the app's token.
+function accessDeniedHelp(token: string, sender: string) {
+  let roles: string[] = [];
+  try {
+    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    roles = JSON.parse(atob(part + '='.repeat((4 - part.length % 4) % 4))).roles ?? [];
+  } catch { /* fall through with no roles */ }
+  if (!roles.includes('Mail.Send')) {
+    return 'Outlook refused the email: the app registration does not have the Mail.Send application permission with admin consent' +
+      (roles.length ? ` (it has: ${roles.join(', ')}).` : ' (it has no application permissions).');
+  }
+  return `Outlook refused the email: the app may send mail, but not as ${sender}. ` +
+    'Check that this mailbox exists and has an Exchange licence, and that it is included in any Application Access Policy (policy changes can take up to an hour).';
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return reply(405, { error: 'Use POST.' });
@@ -130,6 +145,7 @@ ${imageNote ? row('Image', imageNote) : ''}
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
+      if (res.status === 403) throw new Error(accessDeniedHelp(token, sender));
       throw new Error(`Outlook refused the email: ${err.error?.message || res.status}`);
     }
   } catch (e) {
