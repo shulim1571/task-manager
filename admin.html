@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Task Admin</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --surface: #ffffff; --border: #e3e6eb; --text: #1b1f24; --muted: #6b7280;
+    --accent: #3b5bdb; --accent-text: #ffffff; --danger: #c92a2a; --row-hover: #f0f2f5;
+    --high: #e8590c; --medium: #f2b705; --low: #2f9e44;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111418; --surface: #1a1e24; --border: #2c323b; --text: #e7eaee; --muted: #9098a3;
+      --accent: #748ffc; --accent-text: #0b0d10; --danger: #ff6b6b; --row-hover: #222830;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 16px 64px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
+  h1 { font-size: 22px; margin: 0; }
+  h2 { font-size: 16px; margin: 0 0 10px; }
+  a { color: var(--accent); }
+  .muted { color: var(--muted); font-size: 13px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  input, select, button { font: inherit; color: inherit; }
+  input, select { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; min-width: 0; }
+  button { cursor: pointer; border: 1px solid var(--border); background: var(--surface); border-radius: 6px; padding: 6px 12px; }
+  .error { color: var(--danger); }
+  .notice { text-align: center; margin: 15vh auto 0; max-width: 420px; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .tile .label { font-size: 13px; color: var(--muted); }
+  .tile .value { font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  section { margin-bottom: 24px; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; white-space: nowrap; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody tr:hover { background: var(--row-hover); }
+  tr.clickable { cursor: pointer; }
+  tr.selected { background: var(--row-hover); box-shadow: inset 3px 0 var(--accent); }
+  .overdue { color: var(--danger); font-weight: 600; }
+  .pill { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .notes { color: var(--muted); font-size: 13px; white-space: pre-wrap; margin-top: 2px; }
+  .done-title { text-decoration: line-through; color: var(--muted); }
+
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center; }
+  .filters input[type=search] { flex: 1 1 200px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="message" class="card notice" hidden></div>
+
+  <main id="dashboard" hidden>
+    <header>
+      <div>
+        <h1>Task admin</h1>
+        <div class="muted" id="who"></div>
+      </div>
+      <div>
+        <a href="./">Back to my tasks</a>
+        <button id="refresh">Refresh</button>
+      </div>
+    </header>
+
+    <div class="tiles" id="tiles"></div>
+
+    <section class="card">
+      <h2>By user</h2>
+      <div class="muted" style="margin:-6px 0 8px">Click a row to show only that user's tasks.</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>User</th><th class="num">Total</th><th class="num">To do</th><th class="num">In progress</th><th class="num">Done</th><th class="num">Overdue</th><th>Last activity</th></tr></thead>
+          <tbody id="users"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>All tasks</h2>
+      <div class="filters">
+        <input type="search" id="search" placeholder="Search titles and notes…" />
+        <select id="user-filter" aria-label="User"></select>
+        <select id="status-filter" aria-label="Status">
+          <option value="">All statuses</option>
+          <option value="todo">To do</option>
+          <option value="in_progress">In progress</option>
+          <option value="done">Done</option>
+          <option value="overdue">Overdue</option>
+        </select>
+        <select id="sort" aria-label="Sort">
+          <option value="created">Newest first</option>
+          <option value="due">Due date</option>
+          <option value="priority">Priority</option>
+          <option value="user">User</option>
+        </select>
+        <span class="muted" id="count"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Task</th><th>User</th><th>Status</th><th>Priority</th><th>Due</th><th>Created</th></tr></thead>
+          <tbody id="tasks"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+</div>
+
+<script>
+const SUPABASE_URL = 'https://fphdwlshkwdwikqnpxvw.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_zm0Jj2UHIDtEd3PaqPAx3g_Xwkzd9z5';
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const $ = (sel) => document.querySelector(sel);
+const STATUS_LABELS = { todo: 'To do', in_progress: 'In progress', done: 'Done' };
+const PRIORITY_RANK = { high: 0, medium: 1, low: 2 };
+const today = new Date().toISOString().slice(0, 10);
+
+let tasks = [];
+
+function el(tag, props = {}, ...children) {
+  const node = Object.assign(document.createElement(tag), props);
+  node.append(...children.filter((c) => c != null));
+  return node;
+}
+
+function showMessage(...content) {
+  $('#dashboard').hidden = true;
+  $('#message').hidden = false;
+  $('#message').replaceChildren(...content);
+}
+
+const isOverdue = (t) => t.due_date && t.due_date < today && t.status !== 'done';
+const fmtDate = (d) => new Date(d.length === 10 ? d + 'T00:00' : d)
+  .toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+
+// ---------- Load ----------
+async function start() {
+  const { data: { session } } = await db.auth.getSession();
+  if (!session) {
+    return showMessage(el('p', {}, 'Sign in first, then come back to this page.'),
+      el('a', { href: './', textContent: 'Go to sign in' }));
+  }
+  $('#who').textContent = 'Signed in as ' + session.user.email;
+  const { data: admin, error } = await db.rpc('is_admin');
+  if (error) return showMessage(el('p', { className: 'error', textContent: error.message }));
+  if (!admin) {
+    return showMessage(el('p', {}, "This account doesn't have admin access."),
+      el('a', { href: './', textContent: 'Back to my tasks' }));
+  }
+  $('#message').hidden = true;
+  $('#dashboard').hidden = false;
+  await load();
+}
+
+async function load() {
+  const { data, error } = await db.rpc('admin_list_tasks');
+  if (error) return showMessage(el('p', { className: 'error', textContent: error.message }));
+  tasks = data;
+  renderUserOptions();
+  render();
+}
+
+$('#refresh').onclick = load;
+['#search', '#user-filter', '#status-filter', '#sort'].forEach((s) => $(s).addEventListener('input', render));
+
+// ---------- Render ----------
+function userStats() {
+  const byUser = new Map();
+  for (const t of tasks) {
+    const u = byUser.get(t.user_id) || { user_id: t.user_id, email: t.email, total: 0, todo: 0, in_progress: 0, done: 0, overdue: 0, last: t.updated_at };
+    u.total++;
+    u[t.status]++;
+    if (isOverdue(t)) u.overdue++;
+    if (t.updated_at > u.last) u.last = t.updated_at;
+    byUser.set(t.user_id, u);
+  }
+  return [...byUser.values()].sort((a, b) => a.email.localeCompare(b.email));
+}
+
+function renderUserOptions() {
+  const sel = $('#user-filter');
+  const current = sel.value;
+  sel.replaceChildren(el('option', { value: '', textContent: 'All users' }),
+    ...userStats().map((u) => el('option', { value: u.user_id, textContent: u.email })));
+  sel.value = [...sel.options].some((o) => o.value === current) ? current : '';
+}
+
+function render() {
+  const stats = userStats();
+
+  const tile = (label, value) => el('div', { className: 'card tile' },
+    el('div', { className: 'label', textContent: label }), el('div', { className: 'value', textContent: value }));
+  $('#tiles').replaceChildren(
+    tile('Users with tasks', stats.length),
+    tile('Total tasks', tasks.length),
+    tile('Open', tasks.filter((t) => t.status !== 'done').length),
+    tile('Overdue', tasks.filter(isOverdue).length),
+    tile('Done', tasks.filter((t) => t.status === 'done').length),
+  );
+
+  const selectedUser = $('#user-filter').value;
+  $('#users').replaceChildren(...(stats.length ? stats.map((u) => {
+    const row = el('tr', { className: 'clickable' + (u.user_id === selectedUser ? ' selected' : '') },
+      el('td', { textContent: u.email }),
+      el('td', { className: 'num', textContent: u.total }),
+      el('td', { className: 'num', textContent: u.todo }),
+      el('td', { className: 'num', textContent: u.in_progress }),
+      el('td', { className: 'num', textContent: u.done }),
+      el('td', { className: 'num' + (u.overdue ? ' overdue' : ''), textContent: u.overdue }),
+      el('td', { textContent: fmtDate(u.last) }));
+    row.onclick = () => { $('#user-filter').value = u.user_id === selectedUser ? '' : u.user_id; render(); };
+    return row;
+  }) : [el('tr', {}, el('td', { colSpan: 7, className: 'muted', textContent: 'No tasks yet.' }))]));
+
+  const q = $('#search').value.trim().toLowerCase();
+  const status = $('#status-filter').value;
+  const list = tasks.filter((t) =>
+    (!selectedUser || t.user_id === selectedUser) &&
+    (!status || (status === 'overdue' ? isOverdue(t) : t.status === status)) &&
+    (!q || t.title.toLowerCase().includes(q) || (t.notes || '').toLowerCase().includes(q)));
+
+  const sort = $('#sort').value;
+  if (sort === 'due') list.sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999'));
+  if (sort === 'priority') list.sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]);
+  if (sort === 'user') list.sort((a, b) => a.email.localeCompare(b.email));
+
+  $('#count').textContent = `${list.length} of ${tasks.length}`;
+  $('#tasks').replaceChildren(...(list.length ? list.map((t) => {
+    const priority = el('span', { className: 'pill' }, el('span', { className: 'dot' }), t.priority[0].toUpperCase() + t.priority.slice(1));
+    priority.firstChild.style.background = `var(--${t.priority})`;
+    return el('tr', {},
+      el('td', {}, el('div', { className: t.status === 'done' ? 'done-title' : '', textContent: t.title }),
+        t.notes ? el('div', { className: 'notes', textContent: t.notes }) : null),
+      el('td', { textContent: t.email }),
+      el('td', { textContent: STATUS_LABELS[t.status] }),
+      el('td', {}, priority),
+      el('td', { className: isOverdue(t) ? 'overdue' : '', textContent: t.due_date ? fmtDate(t.due_date) : '—' }),
+      el('td', { textContent: fmtDate(t.created_at) }));
+  }) : [el('tr', {}, el('td', { colSpan: 6, className: 'muted', textContent: 'No tasks match these filters.' }))]));
+}
+
+start();
+</script>
+</body>
+</html>

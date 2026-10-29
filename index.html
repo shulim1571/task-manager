@@ -29,6 +29,7 @@
   input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   button { cursor: pointer; border: 1px solid var(--border); background: var(--surface); border-radius: 6px; padding: 8px 12px; }
   button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+  #admin-link { margin-right: 12px; color: var(--accent); }
   button.link { border: none; background: none; padding: 0; color: var(--accent); }
   button:disabled { opacity: .6; cursor: default; }
   .error { color: var(--danger); font-size: 13px; min-height: 1.2em; margin: 8px 0 0; }
@@ -90,7 +91,10 @@
         <h1>Tasks</h1>
         <div class="muted" id="user-email"></div>
       </div>
-      <button id="sign-out">Sign out</button>
+      <div>
+        <a href="admin.html" id="admin-link" hidden>Admin</a>
+        <button id="sign-out">Sign out</button>
+      </div>
     </header>
 
     <form id="new-task">
@@ -174,7 +178,9 @@ db.auth.onAuthStateChange((_event, session) => {
   if (signedIn) {
     $('#user-email').textContent = session.user.email;
     loadTasks();
+    db.rpc('is_admin').then(({ data }) => { $('#admin-link').hidden = !data; });
   } else {
+    $('#admin-link').hidden = true;
     tasks = [];
     render();
   }
