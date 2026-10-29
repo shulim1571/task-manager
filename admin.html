@@ -50,6 +50,8 @@
   .dot { width: 8px; height: 8px; border-radius: 50%; }
   .notes { color: var(--muted); font-size: 13px; white-space: pre-wrap; margin-top: 2px; }
   .done-title { text-decoration: line-through; color: var(--muted); }
+  .badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--accent); color: var(--accent); }
+  td button { padding: 2px 10px; font-size: 13px; white-space: nowrap; }
 
   .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center; }
   .filters input[type=search] { flex: 1 1 200px; }
@@ -76,11 +78,12 @@
     <div class="tiles" id="tiles"></div>
 
     <section class="card">
-      <h2>By user</h2>
+      <h2>Users</h2>
       <div class="muted" style="margin:-6px 0 8px">Click a row to show only that user's tasks.</div>
+      <p class="error" id="users-error" hidden></p>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>User</th><th class="num">Total</th><th class="num">To do</th><th class="num">In progress</th><th class="num">Done</th><th class="num">Overdue</th><th>Last activity</th></tr></thead>
+          <thead><tr><th>User</th><th>Role</th><th class="num">Total</th><th class="num">To do</th><th class="num">In progress</th><th class="num">Done</th><th class="num">Overdue</th><th>Last sign-in</th></tr></thead>
           <tbody id="users"></tbody>
         </table>
       </div>
@@ -128,6 +131,7 @@ const PRIORITY_RANK = { high: 0, medium: 1, low: 2 };
 const today = new Date().toISOString().slice(0, 10);
 
 let tasks = [];
+let users = [];
 
 function el(tag, props = {}, ...children) {
   const node = Object.assign(document.createElement(tag), props);
@@ -165,11 +169,26 @@ async function start() {
 }
 
 async function load() {
-  const { data, error } = await db.rpc('admin_list_tasks');
+  const [taskRes, userRes] = await Promise.all([db.rpc('admin_list_tasks'), db.rpc('admin_list_users')]);
+  const error = taskRes.error || userRes.error;
   if (error) return showMessage(el('p', { className: 'error', textContent: error.message }));
-  tasks = data;
+  tasks = taskRes.data;
+  users = userRes.data;
   renderUserOptions();
   render();
+}
+
+async function makeAdmin(u, button) {
+  if (!confirm(`Make ${u.email} an admin?\n\nThey will be able to see every user's tasks and make other users admins.`)) return;
+  button.disabled = true;
+  const { error } = await db.rpc('admin_grant_admin', { target_user_id: u.user_id });
+  $('#users-error').hidden = !error;
+  if (error) {
+    $('#users-error').textContent = `Couldn't make ${u.email} an admin: ${error.message}`;
+    button.disabled = false;
+    return;
+  }
+  await load();
 }
 
 $('#refresh').onclick = load;
@@ -177,14 +196,16 @@ $('#refresh').onclick = load;
 
 // ---------- Render ----------
 function userStats() {
-  const byUser = new Map();
+  const byUser = new Map(users.map((u) => [u.id, {
+    user_id: u.id, email: u.email, is_admin: u.is_admin, last_sign_in_at: u.last_sign_in_at,
+    total: 0, todo: 0, in_progress: 0, done: 0, overdue: 0,
+  }]));
   for (const t of tasks) {
-    const u = byUser.get(t.user_id) || { user_id: t.user_id, email: t.email, total: 0, todo: 0, in_progress: 0, done: 0, overdue: 0, last: t.updated_at };
+    const u = byUser.get(t.user_id);
+    if (!u) continue;
     u.total++;
     u[t.status]++;
     if (isOverdue(t)) u.overdue++;
-    if (t.updated_at > u.last) u.last = t.updated_at;
-    byUser.set(t.user_id, u);
   }
   return [...byUser.values()].sort((a, b) => a.email.localeCompare(b.email));
 }
@@ -203,7 +224,7 @@ function render() {
   const tile = (label, value) => el('div', { className: 'card tile' },
     el('div', { className: 'label', textContent: label }), el('div', { className: 'value', textContent: value }));
   $('#tiles').replaceChildren(
-    tile('Users with tasks', stats.length),
+    tile('Users', stats.length),
     tile('Total tasks', tasks.length),
     tile('Open', tasks.filter((t) => t.status !== 'done').length),
     tile('Overdue', tasks.filter(isOverdue).length),
@@ -212,17 +233,25 @@ function render() {
 
   const selectedUser = $('#user-filter').value;
   $('#users').replaceChildren(...(stats.length ? stats.map((u) => {
+    let role;
+    if (u.is_admin) {
+      role = el('span', { className: 'badge', textContent: 'Admin' });
+    } else {
+      role = el('button', { type: 'button', textContent: 'Make admin' });
+      role.onclick = (e) => { e.stopPropagation(); makeAdmin(u, role); };
+    }
     const row = el('tr', { className: 'clickable' + (u.user_id === selectedUser ? ' selected' : '') },
       el('td', { textContent: u.email }),
+      el('td', {}, role),
       el('td', { className: 'num', textContent: u.total }),
       el('td', { className: 'num', textContent: u.todo }),
       el('td', { className: 'num', textContent: u.in_progress }),
       el('td', { className: 'num', textContent: u.done }),
       el('td', { className: 'num' + (u.overdue ? ' overdue' : ''), textContent: u.overdue }),
-      el('td', { textContent: fmtDate(u.last) }));
+      el('td', { textContent: u.last_sign_in_at ? fmtDate(u.last_sign_in_at) : 'Never' }));
     row.onclick = () => { $('#user-filter').value = u.user_id === selectedUser ? '' : u.user_id; render(); };
     return row;
-  }) : [el('tr', {}, el('td', { colSpan: 7, className: 'muted', textContent: 'No tasks yet.' }))]));
+  }) : [el('tr', {}, el('td', { colSpan: 8, className: 'muted', textContent: 'No users yet.' }))]));
 
   const q = $('#search').value.trim().toLowerCase();
   const status = $('#status-filter').value;
