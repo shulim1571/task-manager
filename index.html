@@ -68,6 +68,13 @@
   .task textarea { width: 100%; margin-top: 8px; min-height: 60px; resize: vertical; }
   .task .notes { margin-top: 6px; font-size: 13px; color: var(--muted); white-space: pre-wrap; }
   .task .thumb { display: block; margin-top: 8px; max-width: 160px; max-height: 120px; border-radius: 6px; border: 1px solid var(--border); object-fit: cover; }
+  dialog { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 20px; width: min(440px, calc(100vw - 32px)); }
+  dialog::backdrop { background: rgb(0 0 0 / .4); }
+  dialog form { display: grid; gap: 10px; }
+  dialog h2 { margin: 0; font-size: 18px; }
+  dialog textarea { min-height: 80px; resize: vertical; }
+  dialog .buttons { display: flex; justify-content: flex-end; gap: 8px; }
+  dialog .error { margin: 0; }
   .empty { text-align: center; color: var(--muted); padding: 32px 0; }
   [hidden] { display: none !important; }
 </style>
@@ -126,6 +133,20 @@
     <p class="error" id="app-error"></p>
     <ul id="list"></ul>
   </section>
+
+  <dialog id="email-dialog">
+    <form id="email-form" method="dialog">
+      <h2>Email task</h2>
+      <div class="muted" id="email-task"></div>
+      <input name="to" type="email" placeholder="Recipient's email address" autocomplete="email" required />
+      <textarea name="message" placeholder="Add a message (optional)" maxlength="2000"></textarea>
+      <p class="error" id="email-error"></p>
+      <div class="buttons">
+        <button type="button" id="email-cancel">Cancel</button>
+        <button class="primary" type="submit" id="email-send">Send</button>
+      </div>
+    </form>
+  </dialog>
 
 </div>
 
@@ -268,6 +289,34 @@ async function deleteTask(id) {
   if (!error) { tasks = tasks.filter((t) => t.id !== id); render(); }
 }
 
+// ---------- Email ----------
+let emailTask = null;
+function openEmail(t) {
+  emailTask = t;
+  const form = $('#email-form');
+  form.reset();
+  $('#email-task').textContent = t.title;
+  $('#email-error').textContent = '';
+  $('#email-dialog').showModal();
+  form.to.focus();
+}
+$('#email-cancel').onclick = () => $('#email-dialog').close();
+$('#email-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const send = $('#email-send');
+  send.disabled = true;
+  send.textContent = 'Sending…';
+  $('#email-error').textContent = '';
+  const { error } = await db.functions.invoke('send-task-email',
+    { body: { task_id: emailTask.id, to: form.to.value.trim(), message: form.message.value.trim() } });
+  send.disabled = false;
+  send.textContent = 'Send';
+  if (!error) return $('#email-dialog').close();
+  const details = await error.context?.json?.().catch(() => null);
+  $('#email-error').textContent = details?.error || error.message;
+};
+
 // ---------- UI ----------
 $('#filters').onclick = (e) => {
   const btn = e.target.closest('button');
@@ -366,6 +415,8 @@ function renderTask(t) {
   const notesBtn = el('button', { textContent: t.notes ? 'Notes' : '+ Notes' });
   const delBtn = el('button', { textContent: 'Delete' });
   delBtn.onclick = () => deleteTask(t.id);
+  const mailBtn = el('button', { textContent: 'Email' });
+  mailBtn.onclick = () => openEmail(t);
 
   const picker = el('input', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', hidden: true });
   picker.onchange = () => { if (picker.files[0]) uploadImage(t, picker.files[0]); };
@@ -393,7 +444,7 @@ function renderTask(t) {
   };
 
   return el('li', { className: 'card task' + (done ? ' done' : '') },
-    check, body, el('div', { className: 'actions' }, notesBtn, delBtn));
+    check, body, el('div', { className: 'actions' }, notesBtn, mailBtn, delBtn));
 }
 
 setAuthMode(false);

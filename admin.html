@@ -73,6 +73,15 @@
   .link-btn { border: none; background: none; padding: 0 !important; color: var(--accent); font-size: 13px; }
   .link-btn.danger { color: var(--danger); }
 
+  dialog { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 20px; width: min(440px, calc(100vw - 32px)); }
+  dialog::backdrop { background: rgb(0 0 0 / .4); }
+  dialog form { display: grid; gap: 10px; }
+  dialog h2 { margin: 0; }
+  dialog textarea { min-height: 80px; resize: vertical; }
+  dialog .buttons { display: flex; justify-content: flex-end; gap: 8px; }
+  dialog .error { margin: 0; min-height: 1.2em; font-size: 13px; }
+  .action.emailed { color: var(--accent); }
+
   .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
   .row .grow { flex: 1 1 200px; }
   [hidden] { display: none !important; }
@@ -177,6 +186,7 @@
           <option value="created">Created</option>
           <option value="updated">Updated</option>
           <option value="deleted">Deleted</option>
+          <option value="emailed">Emailed</option>
         </select>
         <span class="muted" id="history-count"></span>
       </div>
@@ -188,6 +198,20 @@
       </div>
     </section>
   </main>
+
+  <dialog id="email-dialog">
+    <form id="email-form" method="dialog">
+      <h2>Email task</h2>
+      <div class="muted" id="email-task"></div>
+      <input name="to" type="email" placeholder="Recipient's email address" autocomplete="email" required />
+      <textarea name="message" placeholder="Add a message (optional)" maxlength="2000"></textarea>
+      <p class="error" id="email-error"></p>
+      <div class="buttons">
+        <button type="button" id="email-cancel">Cancel</button>
+        <button class="primary" type="submit" id="email-send">Send</button>
+      </div>
+    </form>
+  </dialog>
 
 </div>
 
@@ -385,6 +409,41 @@ async function removeImage(t) {
   await load();
 }
 
+// ---------- Email ----------
+let emailTask = null;
+function openEmail(t) {
+  emailTask = t;
+  const form = $('#email-form');
+  form.reset();
+  $('#email-task').textContent = t.title;
+  $('#email-error').textContent = '';
+  $('#email-send').disabled = false;
+  $('#email-dialog').showModal();
+  form.to.focus();
+}
+$('#email-cancel').onclick = () => $('#email-dialog').close();
+$('#email-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  $('#email-send').disabled = true;
+  $('#email-send').textContent = 'Sending…';
+  $('#email-error').textContent = '';
+  const error = await sendTaskEmail(emailTask.id, form.to.value.trim(), form.message.value.trim());
+  $('#email-send').disabled = false;
+  $('#email-send').textContent = 'Send';
+  if (error) return ($('#email-error').textContent = error);
+  $('#email-dialog').close();
+  await load();
+};
+
+// Returns an error message, or null when the email was sent.
+async function sendTaskEmail(taskId, to, message) {
+  const { error } = await db.functions.invoke('send-task-email', { body: { task_id: taskId, to, message } });
+  if (!error) return null;
+  const details = await error.context?.json?.().catch(() => null);
+  return details?.error || error.message;
+}
+
 function renderImageCell(t) {
   const picker = el('input', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', hidden: true });
   picker.onchange = () => { if (picker.files[0]) uploadImage(t, picker.files[0]); };
@@ -535,6 +594,8 @@ function renderTaskRow(t) {
   edit.onclick = () => { editingId = t.id; renderTasks(); };
   const hist = el('button', { textContent: 'History' });
   hist.onclick = () => showHistory(t);
+  const mail = el('button', { textContent: 'Email' });
+  mail.onclick = () => openEmail(t);
   const del = el('button', { className: 'danger', textContent: 'Delete' });
   del.onclick = () => deleteTask(t);
 
@@ -546,7 +607,7 @@ function renderTaskRow(t) {
     el('td', {}, status),
     el('td', {}, priority),
     el('td', { className: isOverdue(t) ? 'overdue' : '', textContent: t.due_date ? fmtDate(t.due_date) : '—' }),
-    el('td', {}, el('div', { className: 'actions' }, edit, hist, del)));
+    el('td', {}, el('div', { className: 'actions' }, edit, mail, hist, del)));
 }
 
 // ---------- History ----------
@@ -564,6 +625,11 @@ function fieldValue(field, value) {
 
 function describeChanges(h) {
   if (h.action === 'deleted') return el('span', { className: 'muted', textContent: 'Task deleted' });
+  if (h.action === 'emailed') {
+    return el('ul', { className: 'changes' },
+      el('li', {}, el('span', { className: 'field', textContent: 'Sent to: ' }), h.changes.to),
+      h.changes.message ? el('li', {}, el('span', { className: 'field', textContent: 'Message: ' }), fieldValue('notes', h.changes.message)) : null);
+  }
   if (h.action === 'created') {
     return el('ul', { className: 'changes' }, ...Object.entries(h.changes).map(([field, value]) =>
       el('li', {}, el('span', { className: 'field', textContent: FIELD_LABELS[field] + ': ' }), fieldValue(field, value))));
