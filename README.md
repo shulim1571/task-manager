@@ -17,9 +17,13 @@ Live: https://shulim1571.github.io/task-manager/
 
 Levels live in `public.user_roles` (no row = user) and teams in `public.team_members` (one manager per user). Neither table is readable or writable from the API; changes go through `set_user_role()` and `set_team()`, which check the caller's level. Task access is enforced by RLS via `can_manage_user()`.
 
+## Task images
+
+Each task can have one image (PNG, JPEG, GIF or WebP, up to 5 MB): the **Image** column on the dashboard, and **+ Image** on each task in the main list. Files go in the private `task-images` storage bucket under `<task id>/`, and `tasks.image_path` points to the current one. Storage policies let anyone who can see the task view, upload or remove its image; pages show images through signed URLs that expire after an hour. Replacing, removing or deleting a task also deletes the old file.
+
 ## Task history
 
-Every task insert, update and delete is logged to `public.task_history` by the `tasks_log_change` trigger: who made the change, when, and the old/new value of each changed field (title, notes, status, priority, due date, assignee). The log is append-only from the API (read-only, no insert/update/delete), and visible to the same people who can see the task. The dashboard's **Activity** section shows it; each task's **History** button shows that task alone. Entries with no user ("System") come from changes made outside the app, e.g. in the SQL editor.
+Every task insert, update and delete is logged to `public.task_history` by the `tasks_log_change` trigger: who made the change, when, and the old/new value of each changed field (title, notes, status, priority, due date, image, assignee). The log is append-only from the API (read-only, no insert/update/delete), and visible to the same people who can see the task. The dashboard's **Activity** section shows it; each task's **History** button shows that task alone. Entries with no user ("System") come from changes made outside the app, e.g. in the SQL editor.
 
 To make someone a super admin from the Supabase SQL editor (e.g. if you get locked out):
 

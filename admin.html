@@ -68,6 +68,10 @@
   .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 2px 4px 2px 10px; border-radius: 999px; border: 1px solid var(--accent); }
   .chip button { border: none; background: none; padding: 0 6px; font-size: 15px; line-height: 1; color: var(--muted); }
   td.when { white-space: nowrap; color: var(--muted); font-size: 13px; }
+  .image-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+  .thumb { display: block; width: 64px; height: 48px; border-radius: 6px; border: 1px solid var(--border); object-fit: cover; background: var(--bg); }
+  .link-btn { border: none; background: none; padding: 0 !important; color: var(--accent); font-size: 13px; }
+  .link-btn.danger { color: var(--danger); }
 
   .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
   .row .grow { flex: 1 1 200px; }
@@ -156,7 +160,7 @@
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Task</th><th>Person</th><th>Status</th><th>Priority</th><th>Due</th><th></th></tr></thead>
+          <thead><tr><th>Task</th><th>Image</th><th>Person</th><th>Status</th><th>Priority</th><th>Due</th><th></th></tr></thead>
           <tbody id="tasks"></tbody>
         </table>
       </div>
@@ -206,7 +210,10 @@ let tasks = [];       // tasks in scope
 let editingId = null; // task row in edit mode
 let history = [];     // recent task_history entries in scope
 let historyTask = null; // { id, title } when showing one task's history
+let imageUrls = {};   // image_path -> signed URL
 const HISTORY_LIMIT = 300;
+const IMAGE_BUCKET = 'task-images';
+const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 
 function el(tag, props = {}, ...children) {
   const node = Object.assign(document.createElement(tag), props);
@@ -277,7 +284,17 @@ async function load() {
   tasks = taskRes.data.filter((t) => inScope.has(t.user_id));
   history = historyRes.data.filter((h) => inScope.has(h.task_owner));
   editingId = null;
+  imageUrls = await signImages(tasks);
   render();
+}
+
+// Images are private; show them through short-lived signed URLs.
+async function signImages(list) {
+  const paths = list.map((t) => t.image_path).filter(Boolean);
+  if (!paths.length) return {};
+  const { data, error } = await db.storage.from(IMAGE_BUCKET).createSignedUrls(paths, 3600);
+  if (showError(error)) return {};
+  return Object.fromEntries(data.filter((d) => d.signedUrl).map((d) => [d.path, d.signedUrl]));
 }
 
 function showHistory(task) {
@@ -341,8 +358,47 @@ async function updateTask(id, changes) {
 
 async function deleteTask(t) {
   if (!confirm(`Delete "${t.title}" (${emailOf(t.user_id)})?`)) return;
+  // Remove the image first: storage access is checked against the task, so it can't be removed afterwards.
+  if (t.image_path) await db.storage.from(IMAGE_BUCKET).remove([t.image_path]);
   const { error } = await db.from('tasks').delete().eq('id', t.id);
   if (!showError(error)) await load();
+}
+
+async function uploadImage(t, file) {
+  if (!file.type.startsWith('image/')) return showError(new Error('Choose an image file (PNG, JPEG, GIF or WebP).'));
+  if (file.size > IMAGE_MAX_BYTES) return showError(new Error('Images can be up to 5 MB.'));
+  const ext = (file.name.split('.').pop() || 'img').toLowerCase();
+  const path = `${t.id}/${crypto.randomUUID()}.${ext}`;
+  const { error } = await db.storage.from(IMAGE_BUCKET).upload(path, file, { contentType: file.type });
+  if (showError(error)) return;
+  const { error: saveError } = await db.from('tasks').update({ image_path: path }).eq('id', t.id);
+  if (showError(saveError)) { await db.storage.from(IMAGE_BUCKET).remove([path]); return; }
+  if (t.image_path) await db.storage.from(IMAGE_BUCKET).remove([t.image_path]);
+  await load();
+}
+
+async function removeImage(t) {
+  if (!confirm(`Remove the image from "${t.title}"?`)) return;
+  const { error } = await db.from('tasks').update({ image_path: null }).eq('id', t.id);
+  if (showError(error)) return;
+  await db.storage.from(IMAGE_BUCKET).remove([t.image_path]);
+  await load();
+}
+
+function renderImageCell(t) {
+  const picker = el('input', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', hidden: true });
+  picker.onchange = () => { if (picker.files[0]) uploadImage(t, picker.files[0]); };
+  const upload = el('button', { className: 'link-btn', textContent: t.image_path ? 'Replace' : '+ Upload' });
+  upload.onclick = () => picker.click();
+
+  const url = t.image_path && imageUrls[t.image_path];
+  if (!t.image_path) return el('div', { className: 'image-cell' }, upload, picker);
+  const remove = el('button', { className: 'link-btn danger', textContent: 'Remove' });
+  remove.onclick = () => removeImage(t);
+  const thumb = url
+    ? el('a', { href: url, target: '_blank', rel: 'noopener', title: 'Open full size' }, el('img', { className: 'thumb', src: url, alt: `Image for ${t.title}` }))
+    : el('span', { className: 'muted', textContent: 'Image unavailable' });
+  return el('div', { className: 'image-cell' }, thumb, el('div', { className: 'actions' }, upload, remove), picker);
 }
 
 // ---------- Render ----------
@@ -465,7 +521,7 @@ function renderTasks() {
   $('#count').textContent = `${list.length} of ${tasks.length}`;
   $('#tasks').replaceChildren(...(list.length
     ? list.map((t) => (t.id === editingId ? renderEditRow(t) : renderTaskRow(t)))
-    : [el('tr', {}, el('td', { colSpan: 6, className: 'muted', textContent: tasks.length ? 'No tasks match these filters.' : 'No tasks yet.' }))]));
+    : [el('tr', {}, el('td', { colSpan: 7, className: 'muted', textContent: tasks.length ? 'No tasks match these filters.' : 'No tasks yet.' }))]));
 }
 
 function renderTaskRow(t) {
@@ -485,6 +541,7 @@ function renderTaskRow(t) {
   return el('tr', {},
     el('td', {}, el('div', { className: t.status === 'done' ? 'done-title' : '', textContent: t.title }),
       t.notes ? el('div', { className: 'notes', textContent: t.notes }) : null),
+    el('td', {}, renderImageCell(t)),
     el('td', { textContent: emailOf(t.user_id) }),
     el('td', {}, status),
     el('td', {}, priority),
@@ -493,10 +550,11 @@ function renderTaskRow(t) {
 }
 
 // ---------- History ----------
-const FIELD_LABELS = { title: 'Title', notes: 'Notes', status: 'Status', priority: 'Priority', due_date: 'Due date', assigned_to: 'Assigned to' };
+const FIELD_LABELS = { title: 'Title', notes: 'Notes', status: 'Status', priority: 'Priority', due_date: 'Due date', assigned_to: 'Assigned to', image_path: 'Image' };
 
 function fieldValue(field, value) {
   if (value == null || value === '') return 'none';
+  if (field === 'image_path') return 'an image';
   if (field === 'status') return STATUS_LABELS[value] || value;
   if (field === 'priority') return PRIORITY_LABELS[value] || value;
   if (field === 'due_date') return fmtDate(value);
@@ -559,7 +617,7 @@ function renderEditRow(t) {
   cancel.onclick = () => { editingId = null; renderTasks(); };
 
   const row = el('tr', {},
-    el('td', {}, title, notes), el('td', {}, person), el('td', {}, status),
+    el('td', {}, title, notes), el('td', {}, renderImageCell(t)), el('td', {}, person), el('td', {}, status),
     el('td', {}, priority), el('td', {}, due), el('td', {}, el('div', { className: 'actions' }, save, cancel)));
   row.onkeydown = (e) => { if (e.key === 'Escape') cancel.click(); };
   setTimeout(() => title.focus());

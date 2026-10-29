@@ -67,6 +67,7 @@
   .task .actions button { padding: 4px 8px; font-size: 13px; }
   .task textarea { width: 100%; margin-top: 8px; min-height: 60px; resize: vertical; }
   .task .notes { margin-top: 6px; font-size: 13px; color: var(--muted); white-space: pre-wrap; }
+  .task .thumb { display: block; margin-top: 8px; max-width: 160px; max-height: 120px; border-radius: 6px; border: 1px solid var(--border); object-fit: cover; }
   .empty { text-align: center; color: var(--muted); padding: 32px 0; }
   [hidden] { display: none !important; }
 </style>
@@ -138,7 +139,10 @@ const STATUS_LABELS = { todo: 'To do', in_progress: 'In progress', done: 'Done' 
 const PRIORITY_RANK = { high: 0, medium: 1, low: 2 };
 
 let tasks = [];
+let imageUrls = {}; // image_path -> signed URL
 let filter = 'all';
+const IMAGE_BUCKET = 'task-images';
+const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 let signingUp = false;
 
 // ---------- Auth ----------
@@ -199,7 +203,37 @@ async function loadTasks() {
   const { data: { user } } = await db.auth.getUser();
   const { data, error } = await db.from('tasks').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
   showError(error);
-  if (!error) { tasks = data; render(); }
+  if (!error) { tasks = data; await signImages(); render(); }
+}
+
+// Images are private; show them through short-lived signed URLs.
+async function signImages() {
+  const paths = tasks.map((t) => t.image_path).filter((p) => p && !imageUrls[p]);
+  if (!paths.length) return;
+  const { data, error } = await db.storage.from(IMAGE_BUCKET).createSignedUrls(paths, 3600);
+  if (error) return showError(error);
+  for (const d of data) if (d.signedUrl) imageUrls[d.path] = d.signedUrl;
+}
+
+async function uploadImage(t, file) {
+  if (!file.type.startsWith('image/')) return showError(new Error('Choose an image file (PNG, JPEG, GIF or WebP).'));
+  if (file.size > IMAGE_MAX_BYTES) return showError(new Error('Images can be up to 5 MB.'));
+  const ext = (file.name.split('.').pop() || 'img').toLowerCase();
+  const path = `${t.id}/${crypto.randomUUID()}.${ext}`;
+  const { error } = await db.storage.from(IMAGE_BUCKET).upload(path, file, { contentType: file.type });
+  if (error) return showError(error);
+  const old = t.image_path;
+  await updateTask(t.id, { image_path: path });
+  if (tasks.find((x) => x.id === t.id)?.image_path !== path) return db.storage.from(IMAGE_BUCKET).remove([path]);
+  if (old) await db.storage.from(IMAGE_BUCKET).remove([old]);
+  await signImages();
+  render();
+}
+
+async function removeImage(t) {
+  if (!confirm('Remove the image from this task?')) return;
+  await updateTask(t.id, { image_path: null });
+  if (!tasks.find((x) => x.id === t.id)?.image_path) await db.storage.from(IMAGE_BUCKET).remove([t.image_path]);
 }
 
 $('#new-task').onsubmit = async (e) => {
@@ -226,6 +260,9 @@ async function updateTask(id, changes) {
 
 async function deleteTask(id) {
   if (!confirm('Delete this task?')) return;
+  // Remove the image first: storage access is checked against the task, so it can't be removed afterwards.
+  const image = tasks.find((t) => t.id === id)?.image_path;
+  if (image) await db.storage.from(IMAGE_BUCKET).remove([image]);
   const { error } = await db.from('tasks').delete().eq('id', id);
   showError(error);
   if (!error) { tasks = tasks.filter((t) => t.id !== id); render(); }
@@ -330,7 +367,18 @@ function renderTask(t) {
   const delBtn = el('button', { textContent: 'Delete' });
   delBtn.onclick = () => deleteTask(t.id);
 
-  const body = el('div', {}, title, el('div', { className: 'meta' }, status, priority, due), notesView);
+  const picker = el('input', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', hidden: true });
+  picker.onchange = () => { if (picker.files[0]) uploadImage(t, picker.files[0]); };
+  const imageBtn = el('button', { textContent: t.image_path ? 'Replace image' : '+ Image' });
+  imageBtn.onclick = () => picker.click();
+  const removeImageBtn = t.image_path ? el('button', { textContent: 'Remove image' }) : null;
+  if (removeImageBtn) removeImageBtn.onclick = () => removeImage(t);
+  const url = t.image_path && imageUrls[t.image_path];
+  const imageView = url
+    ? el('a', { href: url, target: '_blank', rel: 'noopener', title: 'Open full size' }, el('img', { className: 'thumb', src: url, alt: `Image for ${t.title}` }))
+    : null;
+
+  const body = el('div', {}, title, el('div', { className: 'meta' }, status, priority, due, imageBtn, removeImageBtn, picker), notesView, imageView);
 
   notesBtn.onclick = () => {
     if (body.querySelector('textarea')) return;
