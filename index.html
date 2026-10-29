@@ -58,7 +58,10 @@
   .pill { display: inline-flex; align-items: center; gap: 5px; }
   .dot { width: 8px; height: 8px; border-radius: 50%; }
   .overdue { color: var(--danger); font-weight: 600; }
-  .task select { padding: 2px 6px; font-size: 13px; }
+  .task select, .task .meta input[type=date] { padding: 2px 6px; font-size: 13px; }
+  .task button.due { border: none; background: none; padding: 0; font-size: 13px; color: var(--muted); }
+  .task button.due:hover { color: var(--accent); text-decoration: underline; }
+  .task button.due.overdue { color: var(--danger); }
   .task .actions { display: flex; gap: 4px; }
   .task .actions button { padding: 4px 8px; font-size: 13px; }
   .task textarea { width: 100%; margin-top: 8px; min-height: 60px; resize: vertical; }
@@ -286,11 +289,29 @@ function renderTask(t) {
     el('span', { className: 'dot' }), t.priority[0].toUpperCase() + t.priority.slice(1));
   priority.firstChild.style.background = `var(--${t.priority})`;
 
-  let due = null;
-  if (t.due_date) {
-    const { label, overdue } = formatDue(t.due_date);
-    due = el('span', { className: overdue && !done ? 'overdue' : '', textContent: 'Due ' + label });
-  }
+  const dueInfo = t.due_date ? formatDue(t.due_date) : null;
+  const due = el('button', {
+    type: 'button',
+    className: 'due' + (dueInfo?.overdue && !done ? ' overdue' : ''),
+    textContent: dueInfo ? 'Due ' + dueInfo.label : '+ Due date',
+    title: 'Change due date',
+  });
+  due.onclick = () => {
+    const input = el('input', { type: 'date', value: t.due_date || '', ariaLabel: 'Due date' });
+    let finished = false;
+    const finish = (save) => {
+      if (finished) return;
+      finished = true;
+      const v = input.value || null;
+      if (save && v !== t.due_date) updateTask(t.id, { due_date: v }); else render();
+    };
+    input.onchange = () => finish(true);
+    input.onblur = () => finish(true);
+    input.onkeydown = (e) => { if (e.key === 'Enter') finish(true); if (e.key === 'Escape') finish(false); };
+    due.replaceWith(input);
+    input.focus();
+    try { input.showPicker(); } catch {}
+  };
 
   const notesView = t.notes ? el('div', { className: 'notes', textContent: t.notes }) : null;
 
