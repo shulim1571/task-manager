@@ -19,17 +19,22 @@
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 16px 64px; }
+  .wrap { max-width: 1150px; margin: 0 auto; padding: 32px 16px 64px; }
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
+  header nav { display: flex; gap: 12px; align-items: center; }
   h1 { font-size: 22px; margin: 0; }
   h2 { font-size: 16px; margin: 0 0 10px; }
   a { color: var(--accent); }
   .muted { color: var(--muted); font-size: 13px; }
+  .hint { color: var(--muted); font-size: 13px; margin: -6px 0 10px; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
-  input, select, button { font: inherit; color: inherit; }
-  input, select { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; min-width: 0; }
-  button { cursor: pointer; border: 1px solid var(--border); background: var(--surface); border-radius: 6px; padding: 6px 12px; }
-  .error { color: var(--danger); }
+  input, select, textarea, button { font: inherit; color: inherit; }
+  input, select, textarea { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; min-width: 0; }
+  button { cursor: pointer; border: 1px solid var(--border); background: var(--surface); border-radius: 6px; padding: 6px 12px; white-space: nowrap; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+  button.danger { color: var(--danger); }
+  button:disabled, select:disabled { opacity: .6; cursor: default; }
+  .error { color: var(--danger); margin: 0 0 12px; }
   .notice { text-align: center; margin: 15vh auto 0; max-width: 420px; }
 
   .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 24px; }
@@ -42,19 +47,22 @@
   th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
   th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; white-space: nowrap; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td select, td button, td input { padding: 2px 8px; font-size: 13px; }
+  td textarea { width: 100%; min-height: 50px; font-size: 13px; margin-top: 6px; resize: vertical; }
+  td input.title-input { width: 100%; }
   tbody tr:hover { background: var(--row-hover); }
   tr.clickable { cursor: pointer; }
   tr.selected { background: var(--row-hover); box-shadow: inset 3px 0 var(--accent); }
+  .actions { display: flex; gap: 4px; }
   .overdue { color: var(--danger); font-weight: 600; }
   .pill { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
   .dot { width: 8px; height: 8px; border-radius: 50%; }
   .notes { color: var(--muted); font-size: 13px; white-space: pre-wrap; margin-top: 2px; }
   .done-title { text-decoration: line-through; color: var(--muted); }
-  .badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--accent); color: var(--accent); }
-  td button { padding: 2px 10px; font-size: 13px; white-space: nowrap; }
+  .you { color: var(--muted); font-size: 12px; }
 
-  .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center; }
-  .filters input[type=search] { flex: 1 1 200px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+  .row .grow { flex: 1 1 200px; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -66,34 +74,63 @@
   <main id="dashboard" hidden>
     <header>
       <div>
-        <h1>Task admin</h1>
+        <h1 id="heading"></h1>
         <div class="muted" id="who"></div>
       </div>
-      <div>
+      <nav>
         <a href="./">Back to my tasks</a>
         <button id="refresh">Refresh</button>
-      </div>
+      </nav>
     </header>
+
+    <p class="error" id="error" hidden></p>
 
     <div class="tiles" id="tiles"></div>
 
-    <section class="card">
-      <h2>Users</h2>
-      <div class="muted" style="margin:-6px 0 8px">Click a row to show only that user's tasks.</div>
-      <p class="error" id="users-error" hidden></p>
+    <!-- Super admin: everyone, with level and manager controls -->
+    <section class="card" id="people-section" hidden>
+      <h2>People</h2>
+      <p class="hint">Change someone's level or manager with the dropdowns. Click a row to show only that person's tasks.</p>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>User</th><th>Role</th><th class="num">Total</th><th class="num">To do</th><th class="num">In progress</th><th class="num">Done</th><th class="num">Overdue</th><th>Last sign-in</th></tr></thead>
-          <tbody id="users"></tbody>
+          <thead><tr><th>User</th><th>Level</th><th>Manager</th><th class="num">Tasks</th><th class="num">Open</th><th class="num">Overdue</th><th>Last sign-in</th></tr></thead>
+          <tbody id="people"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Manager: own team, plus adding unassigned users -->
+    <section class="card" id="team-section" hidden>
+      <h2>My team</h2>
+      <p class="hint">Click a row to show only that person's tasks.</p>
+      <div class="row" id="add-member-row">
+        <select id="add-member" class="grow" aria-label="User to add"></select>
+        <button class="primary" id="add-member-btn">Add to my team</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>User</th><th class="num">Tasks</th><th class="num">Open</th><th class="num">Overdue</th><th>Last sign-in</th><th></th></tr></thead>
+          <tbody id="team"></tbody>
         </table>
       </div>
     </section>
 
     <section class="card">
-      <h2>All tasks</h2>
-      <div class="filters">
-        <input type="search" id="search" placeholder="Search titles and notes…" />
-        <select id="user-filter" aria-label="User"></select>
+      <h2 id="tasks-heading">Tasks</h2>
+      <form class="row" id="new-task">
+        <select name="user_id" aria-label="Assign to" required></select>
+        <input name="title" class="grow" placeholder="New task…" maxlength="200" required />
+        <select name="priority" aria-label="Priority">
+          <option value="low">Low</option>
+          <option value="medium" selected>Medium</option>
+          <option value="high">High</option>
+        </select>
+        <input name="due_date" type="date" aria-label="Due date" />
+        <button class="primary" type="submit">Add task</button>
+      </form>
+      <div class="row">
+        <input type="search" id="search" class="grow" placeholder="Search titles and notes…" />
+        <select id="person-filter" aria-label="Person"></select>
         <select id="status-filter" aria-label="Status">
           <option value="">All statuses</option>
           <option value="todo">To do</option>
@@ -105,13 +142,13 @@
           <option value="created">Newest first</option>
           <option value="due">Due date</option>
           <option value="priority">Priority</option>
-          <option value="user">User</option>
+          <option value="person">Person</option>
         </select>
         <span class="muted" id="count"></span>
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Task</th><th>User</th><th>Status</th><th>Priority</th><th>Due</th><th>Created</th></tr></thead>
+          <thead><tr><th>Task</th><th>Person</th><th>Status</th><th>Priority</th><th>Due</th><th></th></tr></thead>
           <tbody id="tasks"></tbody>
         </table>
       </div>
@@ -127,27 +164,46 @@ const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const $ = (sel) => document.querySelector(sel);
 const STATUS_LABELS = { todo: 'To do', in_progress: 'In progress', done: 'Done' };
+const PRIORITY_LABELS = { low: 'Low', medium: 'Medium', high: 'High' };
+const LEVEL_LABELS = { user: 'User', manager: 'Manager', super_admin: 'Super admin' };
 const PRIORITY_RANK = { high: 0, medium: 1, low: 2 };
 const today = new Date().toISOString().slice(0, 10);
 
-let tasks = [];
-let users = [];
+let me = null;        // { id, email }
+let myLevel = null;   // 'super_admin' | 'manager'
+let people = [];      // from list_people()
+let tasks = [];       // tasks in scope
+let editingId = null; // task row in edit mode
 
 function el(tag, props = {}, ...children) {
   const node = Object.assign(document.createElement(tag), props);
   node.append(...children.filter((c) => c != null));
   return node;
 }
+const options = (pairs, selected) => pairs.map(([value, label]) => el('option', { value, textContent: label, selected: value === selected }));
 
 function showMessage(...content) {
   $('#dashboard').hidden = true;
   $('#message').hidden = false;
   $('#message').replaceChildren(...content);
 }
+function showError(error) {
+  $('#error').hidden = !error;
+  $('#error').textContent = error ? error.message : '';
+  return !!error;
+}
 
 const isOverdue = (t) => t.due_date && t.due_date < today && t.status !== 'done';
 const fmtDate = (d) => new Date(d.length === 10 ? d + 'T00:00' : d)
   .toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+
+// People whose tasks this dashboard covers: everyone for a super admin, the team for a manager.
+function scopePeople() {
+  return myLevel === 'super_admin' ? people : people.filter((p) => p.manager_id === me.id);
+}
+function emailOf(id) {
+  return people.find((p) => p.id === id)?.email || (id === me.id ? me.email : 'Unknown user');
+}
 
 // ---------- Load ----------
 async function start() {
@@ -156,128 +212,261 @@ async function start() {
     return showMessage(el('p', {}, 'Sign in first, then come back to this page.'),
       el('a', { href: './', textContent: 'Go to sign in' }));
   }
-  $('#who').textContent = 'Signed in as ' + session.user.email;
-  const { data: admin, error } = await db.rpc('is_admin');
+  me = { id: session.user.id, email: session.user.email };
+  const { data: level, error } = await db.rpc('my_role');
   if (error) return showMessage(el('p', { className: 'error', textContent: error.message }));
-  if (!admin) {
-    return showMessage(el('p', {}, "This account doesn't have admin access."),
+  if (level !== 'super_admin' && level !== 'manager') {
+    return showMessage(el('p', {}, 'This page is for managers and super admins.'),
       el('a', { href: './', textContent: 'Back to my tasks' }));
   }
+  myLevel = level;
+  $('#heading').textContent = myLevel === 'super_admin' ? 'Super admin' : 'Manager dashboard';
+  $('#who').textContent = `Signed in as ${me.email} · ${LEVEL_LABELS[myLevel]}`;
+  $('#tasks-heading').textContent = myLevel === 'super_admin' ? 'All tasks' : 'Team tasks';
+  $('#people-section').hidden = myLevel !== 'super_admin';
+  $('#team-section').hidden = myLevel !== 'manager';
   $('#message').hidden = true;
   $('#dashboard').hidden = false;
   await load();
 }
 
 async function load() {
-  const [taskRes, userRes] = await Promise.all([db.rpc('admin_list_tasks'), db.rpc('admin_list_users')]);
-  const error = taskRes.error || userRes.error;
-  if (error) return showMessage(el('p', { className: 'error', textContent: error.message }));
-  tasks = taskRes.data;
-  users = userRes.data;
-  renderUserOptions();
+  const [peopleRes, taskRes] = await Promise.all([
+    db.rpc('list_people'),
+    db.from('tasks').select('*').order('created_at', { ascending: false }),
+  ]);
+  if (showError(peopleRes.error || taskRes.error)) return;
+  people = peopleRes.data;
+  const inScope = new Set(scopePeople().map((p) => p.id));
+  tasks = taskRes.data.filter((t) => inScope.has(t.user_id));
+  editingId = null;
   render();
 }
 
-async function makeAdmin(u, button) {
-  if (!confirm(`Make ${u.email} an admin?\n\nThey will be able to see every user's tasks and make other users admins.`)) return;
-  button.disabled = true;
-  const { error } = await db.rpc('admin_grant_admin', { target_user_id: u.user_id });
-  $('#users-error').hidden = !error;
-  if (error) {
-    $('#users-error').textContent = `Couldn't make ${u.email} an admin: ${error.message}`;
-    button.disabled = false;
-    return;
-  }
-  await load();
+$('#refresh').onclick = load;
+
+// ---------- Actions ----------
+async function rpc(name, args) {
+  const { error } = await db.rpc(name, args);
+  if (!showError(error)) await load();
+  else render(); // put dropdowns back to their real values
 }
 
-$('#refresh').onclick = load;
-['#search', '#user-filter', '#status-filter', '#sort'].forEach((s) => $(s).addEventListener('input', render));
+function changeLevel(person, level) {
+  const warning = level === 'super_admin'
+    ? '\n\nSuper admins can see and change everything, including everyone\'s level.'
+    : level === 'user' && person.role === 'manager' ? '\n\nTheir team will be left without a manager.' : '';
+  if (!confirm(`Make ${person.email} a ${LEVEL_LABELS[level]}?${warning}`)) return render();
+  rpc('set_user_role', { target_user_id: person.id, new_role: level });
+}
+
+function changeManager(person, managerId) {
+  const manager = people.find((p) => p.id === managerId);
+  const text = manager ? `Put ${person.email} on ${manager.email}'s team?` : `Remove ${person.email} from ${person.manager_email}'s team?`;
+  if (!confirm(text)) return render();
+  rpc('set_team', { target_user_id: person.id, new_manager_id: managerId || null });
+}
+
+$('#add-member-btn').onclick = () => {
+  const id = $('#add-member').value;
+  if (id) rpc('set_team', { target_user_id: id, new_manager_id: me.id });
+};
+
+function removeMember(person) {
+  if (!confirm(`Remove ${person.email} from your team? You will no longer see their tasks.`)) return;
+  rpc('set_team', { target_user_id: person.id, new_manager_id: null });
+}
+
+$('#new-task').onsubmit = async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const fd = Object.fromEntries(new FormData(form));
+  const row = { user_id: fd.user_id, title: fd.title.trim(), priority: fd.priority, due_date: fd.due_date || null };
+  if (!row.title || !row.user_id) return;
+  const { error } = await db.from('tasks').insert(row);
+  if (showError(error)) return;
+  form.title.value = '';
+  form.due_date.value = '';
+  form.priority.value = 'medium';
+  await load();
+};
+
+async function updateTask(id, changes) {
+  const { error } = await db.from('tasks').update(changes).eq('id', id);
+  if (!showError(error)) await load();
+}
+
+async function deleteTask(t) {
+  if (!confirm(`Delete "${t.title}" (${emailOf(t.user_id)})?`)) return;
+  const { error } = await db.from('tasks').delete().eq('id', t.id);
+  if (!showError(error)) await load();
+}
 
 // ---------- Render ----------
-function userStats() {
-  const byUser = new Map(users.map((u) => [u.id, {
-    user_id: u.id, email: u.email, is_admin: u.is_admin, last_sign_in_at: u.last_sign_in_at,
-    total: 0, todo: 0, in_progress: 0, done: 0, overdue: 0,
-  }]));
-  for (const t of tasks) {
-    const u = byUser.get(t.user_id);
-    if (!u) continue;
-    u.total++;
-    u[t.status]++;
-    if (isOverdue(t)) u.overdue++;
-  }
-  return [...byUser.values()].sort((a, b) => a.email.localeCompare(b.email));
+['#search', '#person-filter', '#status-filter', '#sort'].forEach((s) => $(s).addEventListener('input', renderTasks));
+
+function stats(personId) {
+  const own = tasks.filter((t) => t.user_id === personId);
+  return { total: own.length, open: own.filter((t) => t.status !== 'done').length, overdue: own.filter(isOverdue).length };
 }
 
-function renderUserOptions() {
-  const sel = $('#user-filter');
-  const current = sel.value;
-  sel.replaceChildren(el('option', { value: '', textContent: 'All users' }),
-    ...userStats().map((u) => el('option', { value: u.user_id, textContent: u.email })));
-  sel.value = [...sel.options].some((o) => o.value === current) ? current : '';
+function selectPerson(id) {
+  $('#person-filter').value = $('#person-filter').value === id ? '' : id;
+  render();
 }
 
 function render() {
-  const stats = userStats();
+  const scope = scopePeople();
 
   const tile = (label, value) => el('div', { className: 'card tile' },
     el('div', { className: 'label', textContent: label }), el('div', { className: 'value', textContent: value }));
   $('#tiles').replaceChildren(
-    tile('Users', stats.length),
-    tile('Total tasks', tasks.length),
+    tile(myLevel === 'super_admin' ? 'People' : 'Team members', scope.length),
+    tile('Tasks', tasks.length),
     tile('Open', tasks.filter((t) => t.status !== 'done').length),
     tile('Overdue', tasks.filter(isOverdue).length),
     tile('Done', tasks.filter((t) => t.status === 'done').length),
   );
 
-  const selectedUser = $('#user-filter').value;
-  $('#users').replaceChildren(...(stats.length ? stats.map((u) => {
-    let role;
-    if (u.is_admin) {
-      role = el('span', { className: 'badge', textContent: 'Admin' });
-    } else {
-      role = el('button', { type: 'button', textContent: 'Make admin' });
-      role.onclick = (e) => { e.stopPropagation(); makeAdmin(u, role); };
-    }
-    const row = el('tr', { className: 'clickable' + (u.user_id === selectedUser ? ' selected' : '') },
-      el('td', { textContent: u.email }),
-      el('td', {}, role),
-      el('td', { className: 'num', textContent: u.total }),
-      el('td', { className: 'num', textContent: u.todo }),
-      el('td', { className: 'num', textContent: u.in_progress }),
-      el('td', { className: 'num', textContent: u.done }),
-      el('td', { className: 'num' + (u.overdue ? ' overdue' : ''), textContent: u.overdue }),
-      el('td', { textContent: u.last_sign_in_at ? fmtDate(u.last_sign_in_at) : 'Never' }));
-    row.onclick = () => { $('#user-filter').value = u.user_id === selectedUser ? '' : u.user_id; render(); };
-    return row;
-  }) : [el('tr', {}, el('td', { colSpan: 8, className: 'muted', textContent: 'No users yet.' }))]));
+  // Person pickers (task form + filter) only list people in scope.
+  const picks = scope.map((p) => [p.id, p.email + (p.id === me.id ? ' (you)' : '')]);
+  const filterSel = $('#person-filter');
+  const keepFilter = filterSel.value;
+  filterSel.replaceChildren(...options([['', 'Everyone'], ...picks], keepFilter));
+  const assignSel = $('#new-task').user_id;
+  const keepAssign = assignSel.value;
+  assignSel.replaceChildren(...options([['', picks.length ? 'Assign to…' : 'No one to assign to'], ...picks], keepAssign));
 
+  if (myLevel === 'super_admin') renderPeople(); else renderTeam();
+  renderTasks();
+}
+
+function renderPeople() {
+  const selected = $('#person-filter').value;
+  const managers = people.filter((p) => p.role === 'manager');
+  $('#people').replaceChildren(...people.map((p) => {
+    const s = stats(p.id);
+    const level = el('select', { ariaLabel: 'Level', disabled: p.id === me.id, title: p.id === me.id ? "You can't change your own level" : '' },
+      ...options(Object.entries(LEVEL_LABELS), p.role));
+    level.onclick = (e) => e.stopPropagation();
+    level.onchange = () => changeLevel(p, level.value);
+
+    let manager;
+    if (p.role === 'user') {
+      manager = el('select', { ariaLabel: 'Manager' },
+        ...options([['', managers.length ? 'No manager' : 'No managers yet'], ...managers.map((m) => [m.id, m.email])], p.manager_id || ''));
+      manager.onclick = (e) => e.stopPropagation();
+      manager.onchange = () => changeManager(p, manager.value);
+    } else {
+      manager = el('span', { className: 'muted', textContent: '—' });
+    }
+
+    const row = el('tr', { className: 'clickable' + (p.id === selected ? ' selected' : '') },
+      el('td', {}, p.email, p.id === me.id ? el('span', { className: 'you', textContent: ' (you)' }) : null),
+      el('td', {}, level),
+      el('td', {}, manager),
+      el('td', { className: 'num', textContent: s.total }),
+      el('td', { className: 'num', textContent: s.open }),
+      el('td', { className: 'num' + (s.overdue ? ' overdue' : ''), textContent: s.overdue }),
+      el('td', { textContent: p.last_sign_in_at ? fmtDate(p.last_sign_in_at) : 'Never' }));
+    row.onclick = () => selectPerson(p.id);
+    return row;
+  }));
+}
+
+function renderTeam() {
+  const selected = $('#person-filter').value;
+  const team = scopePeople();
+  const unassigned = people.filter((p) => !p.manager_id);
+
+  $('#add-member').replaceChildren(...options(unassigned.length
+    ? [['', 'Choose a user without a manager…'], ...unassigned.map((p) => [p.id, p.email])]
+    : [['', 'Everyone already has a manager']], ''));
+  $('#add-member').disabled = $('#add-member-btn').disabled = !unassigned.length;
+
+  $('#team').replaceChildren(...(team.length ? team.map((p) => {
+    const s = stats(p.id);
+    const remove = el('button', { className: 'danger', textContent: 'Remove' });
+    remove.onclick = (e) => { e.stopPropagation(); removeMember(p); };
+    const row = el('tr', { className: 'clickable' + (p.id === selected ? ' selected' : '') },
+      el('td', { textContent: p.email }),
+      el('td', { className: 'num', textContent: s.total }),
+      el('td', { className: 'num', textContent: s.open }),
+      el('td', { className: 'num' + (s.overdue ? ' overdue' : ''), textContent: s.overdue }),
+      el('td', { textContent: p.last_sign_in_at ? fmtDate(p.last_sign_in_at) : 'Never' }),
+      el('td', {}, remove));
+    row.onclick = () => selectPerson(p.id);
+    return row;
+  }) : [el('tr', {}, el('td', { colSpan: 6, className: 'muted', textContent: 'Your team is empty. Add someone above.' }))]));
+}
+
+function renderTasks() {
   const q = $('#search').value.trim().toLowerCase();
+  const person = $('#person-filter').value;
   const status = $('#status-filter').value;
   const list = tasks.filter((t) =>
-    (!selectedUser || t.user_id === selectedUser) &&
+    (!person || t.user_id === person) &&
     (!status || (status === 'overdue' ? isOverdue(t) : t.status === status)) &&
     (!q || t.title.toLowerCase().includes(q) || (t.notes || '').toLowerCase().includes(q)));
 
   const sort = $('#sort').value;
   if (sort === 'due') list.sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999'));
   if (sort === 'priority') list.sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]);
-  if (sort === 'user') list.sort((a, b) => a.email.localeCompare(b.email));
+  if (sort === 'person') list.sort((a, b) => emailOf(a.user_id).localeCompare(emailOf(b.user_id)));
 
   $('#count').textContent = `${list.length} of ${tasks.length}`;
-  $('#tasks').replaceChildren(...(list.length ? list.map((t) => {
-    const priority = el('span', { className: 'pill' }, el('span', { className: 'dot' }), t.priority[0].toUpperCase() + t.priority.slice(1));
-    priority.firstChild.style.background = `var(--${t.priority})`;
-    return el('tr', {},
-      el('td', {}, el('div', { className: t.status === 'done' ? 'done-title' : '', textContent: t.title }),
-        t.notes ? el('div', { className: 'notes', textContent: t.notes }) : null),
-      el('td', { textContent: t.email }),
-      el('td', { textContent: STATUS_LABELS[t.status] }),
-      el('td', {}, priority),
-      el('td', { className: isOverdue(t) ? 'overdue' : '', textContent: t.due_date ? fmtDate(t.due_date) : '—' }),
-      el('td', { textContent: fmtDate(t.created_at) }));
-  }) : [el('tr', {}, el('td', { colSpan: 6, className: 'muted', textContent: 'No tasks match these filters.' }))]));
+  $('#tasks').replaceChildren(...(list.length
+    ? list.map((t) => (t.id === editingId ? renderEditRow(t) : renderTaskRow(t)))
+    : [el('tr', {}, el('td', { colSpan: 6, className: 'muted', textContent: tasks.length ? 'No tasks match these filters.' : 'No tasks yet.' }))]));
+}
+
+function renderTaskRow(t) {
+  const status = el('select', { ariaLabel: 'Status' }, ...options(Object.entries(STATUS_LABELS), t.status));
+  status.onchange = () => updateTask(t.id, { status: status.value });
+
+  const priority = el('span', { className: 'pill' }, el('span', { className: 'dot' }), PRIORITY_LABELS[t.priority]);
+  priority.firstChild.style.background = `var(--${t.priority})`;
+
+  const edit = el('button', { textContent: 'Edit' });
+  edit.onclick = () => { editingId = t.id; renderTasks(); };
+  const del = el('button', { className: 'danger', textContent: 'Delete' });
+  del.onclick = () => deleteTask(t);
+
+  return el('tr', {},
+    el('td', {}, el('div', { className: t.status === 'done' ? 'done-title' : '', textContent: t.title }),
+      t.notes ? el('div', { className: 'notes', textContent: t.notes }) : null),
+    el('td', { textContent: emailOf(t.user_id) }),
+    el('td', {}, status),
+    el('td', {}, priority),
+    el('td', { className: isOverdue(t) ? 'overdue' : '', textContent: t.due_date ? fmtDate(t.due_date) : '—' }),
+    el('td', {}, el('div', { className: 'actions' }, edit, del)));
+}
+
+function renderEditRow(t) {
+  const title = el('input', { className: 'title-input', value: t.title, maxLength: 200, ariaLabel: 'Title' });
+  const notes = el('textarea', { value: t.notes || '', placeholder: 'Notes…', ariaLabel: 'Notes' });
+  const person = el('select', { ariaLabel: 'Person' }, ...options(scopePeople().map((p) => [p.id, p.email]), t.user_id));
+  const status = el('select', { ariaLabel: 'Status' }, ...options(Object.entries(STATUS_LABELS), t.status));
+  const priority = el('select', { ariaLabel: 'Priority' }, ...options(Object.entries(PRIORITY_LABELS), t.priority));
+  const due = el('input', { type: 'date', value: t.due_date || '', ariaLabel: 'Due date' });
+
+  const save = el('button', { className: 'primary', textContent: 'Save' });
+  save.onclick = () => {
+    if (!title.value.trim()) return title.focus();
+    updateTask(t.id, {
+      title: title.value.trim(), notes: notes.value.trim() || null, user_id: person.value,
+      status: status.value, priority: priority.value, due_date: due.value || null,
+    });
+  };
+  const cancel = el('button', { textContent: 'Cancel' });
+  cancel.onclick = () => { editingId = null; renderTasks(); };
+
+  const row = el('tr', {},
+    el('td', {}, title, notes), el('td', {}, person), el('td', {}, status),
+    el('td', {}, priority), el('td', {}, due), el('td', {}, el('div', { className: 'actions' }, save, cancel)));
+  row.onkeydown = (e) => { if (e.key === 'Escape') cancel.click(); };
+  setTimeout(() => title.focus());
+  return row;
 }
 
 start();
