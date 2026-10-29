@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Task Manager</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --surface: #ffffff; --border: #e3e6eb; --text: #1b1f24; --muted: #6b7280;
+    --accent: #3b5bdb; --accent-text: #ffffff; --danger: #c92a2a;
+    --high: #e8590c; --medium: #f2b705; --low: #2f9e44; --done: #9aa1ab;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111418; --surface: #1a1e24; --border: #2c323b; --text: #e7eaee; --muted: #9098a3;
+      --accent: #748ffc; --accent-text: #0b0d10; --danger: #ff6b6b; --done: #5c636d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 24px; }
+  h1 { font-size: 22px; margin: 0; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  input, select, textarea, button { font: inherit; color: inherit; }
+  input, select, textarea { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; min-width: 0; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button { cursor: pointer; border: 1px solid var(--border); background: var(--surface); border-radius: 6px; padding: 8px 12px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+  button.link { border: none; background: none; padding: 0; color: var(--accent); }
+  button:disabled { opacity: .6; cursor: default; }
+  .error { color: var(--danger); font-size: 13px; min-height: 1.2em; margin: 8px 0 0; }
+
+  /* Auth */
+  #auth { max-width: 380px; margin: 10vh auto 0; }
+  #auth form { display: grid; gap: 10px; }
+  #auth h2 { margin: 0 0 4px; font-size: 18px; }
+
+  /* New task */
+  #new-task { display: grid; grid-template-columns: 1fr auto auto auto; gap: 8px; margin-bottom: 16px; }
+  @media (max-width: 600px) { #new-task { grid-template-columns: 1fr 1fr; } #new-task input[name=title] { grid-column: 1 / -1; } }
+
+  /* Filters */
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+  .tabs button { border-radius: 999px; padding: 4px 12px; font-size: 13px; }
+  .tabs button[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+
+  /* List */
+  #list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  .task { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: start; }
+  .task input[type=checkbox] { width: 18px; height: 18px; margin-top: 3px; accent-color: var(--accent); }
+  .task .title { font-weight: 500; word-break: break-word; cursor: text; }
+  .task.done .title { text-decoration: line-through; color: var(--done); }
+  .task .meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 4px; font-size: 13px; color: var(--muted); }
+  .pill { display: inline-flex; align-items: center; gap: 5px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .overdue { color: var(--danger); font-weight: 600; }
+  .task select { padding: 2px 6px; font-size: 13px; }
+  .task .actions { display: flex; gap: 4px; }
+  .task .actions button { padding: 4px 8px; font-size: 13px; }
+  .task textarea { width: 100%; margin-top: 8px; min-height: 60px; resize: vertical; }
+  .task .notes { margin-top: 6px; font-size: 13px; color: var(--muted); white-space: pre-wrap; }
+  .empty { text-align: center; color: var(--muted); padding: 32px 0; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <section id="auth" class="card" hidden>
+    <form id="auth-form">
+      <h2 id="auth-title">Sign in</h2>
+      <input name="email" type="email" placeholder="Email" autocomplete="email" required />
+      <input name="password" type="password" placeholder="Password (min 6 characters)" minlength="6" autocomplete="current-password" required />
+      <button class="primary" type="submit" id="auth-submit">Sign in</button>
+      <span class="muted"><span id="auth-switch-text">No account?</span> <button type="button" class="link" id="auth-switch">Create one</button></span>
+      <p class="error" id="auth-error"></p>
+    </form>
+  </section>
+
+  <section id="app" hidden>
+    <header>
+      <div>
+        <h1>Tasks</h1>
+        <div class="muted" id="user-email"></div>
+      </div>
+      <button id="sign-out">Sign out</button>
+    </header>
+
+    <form id="new-task">
+      <input name="title" placeholder="Add a task…" maxlength="200" required />
+      <select name="priority" aria-label="Priority">
+        <option value="low">Low</option>
+        <option value="medium" selected>Medium</option>
+        <option value="high">High</option>
+      </select>
+      <input name="due_date" type="date" aria-label="Due date" />
+      <button class="primary" type="submit">Add</button>
+    </form>
+
+    <div class="toolbar">
+      <div class="tabs" id="filters">
+        <button data-filter="all" aria-pressed="true">All</button>
+        <button data-filter="todo" aria-pressed="false">To do</button>
+        <button data-filter="in_progress" aria-pressed="false">In progress</button>
+        <button data-filter="done" aria-pressed="false">Done</button>
+      </div>
+      <select id="sort" aria-label="Sort">
+        <option value="created">Newest first</option>
+        <option value="due">Due date</option>
+        <option value="priority">Priority</option>
+      </select>
+    </div>
+
+    <p class="error" id="app-error"></p>
+    <ul id="list"></ul>
+  </section>
+
+</div>
+
+<script>
+const SUPABASE_URL = 'https://fphdwlshkwdwikqnpxvw.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_zm0Jj2UHIDtEd3PaqPAx3g_Xwkzd9z5';
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const $ = (sel) => document.querySelector(sel);
+const STATUS_LABELS = { todo: 'To do', in_progress: 'In progress', done: 'Done' };
+const PRIORITY_RANK = { high: 0, medium: 1, low: 2 };
+
+let tasks = [];
+let filter = 'all';
+let signingUp = false;
+
+// ---------- Auth ----------
+function setAuthMode(up) {
+  signingUp = up;
+  $('#auth-title').textContent = up ? 'Create account' : 'Sign in';
+  $('#auth-submit').textContent = up ? 'Sign up' : 'Sign in';
+  $('#auth-switch-text').textContent = up ? 'Have an account?' : 'No account?';
+  $('#auth-switch').textContent = up ? 'Sign in' : 'Create one';
+  $('#auth-error').textContent = '';
+}
+$('#auth-switch').onclick = () => setAuthMode(!signingUp);
+
+$('#auth-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const { email, password } = Object.fromEntries(new FormData(e.target));
+  const btn = $('#auth-submit');
+  btn.disabled = true;
+  $('#auth-error').textContent = '';
+  const { data, error } = signingUp
+    ? await db.auth.signUp({ email, password })
+    : await db.auth.signInWithPassword({ email, password });
+  btn.disabled = false;
+  if (error) return ($('#auth-error').textContent = error.message);
+  if (signingUp && !data.session) {
+    setAuthMode(false);
+    $('#auth-error').textContent = 'Check your email to confirm your account, then sign in.';
+  }
+};
+
+$('#sign-out').onclick = () => db.auth.signOut();
+
+db.auth.onAuthStateChange((_event, session) => {
+  const signedIn = !!session;
+  $('#auth').hidden = signedIn;
+  $('#app').hidden = !signedIn;
+  if (signedIn) {
+    $('#user-email').textContent = session.user.email;
+    loadTasks();
+  } else {
+    tasks = [];
+    render();
+  }
+});
+
+// ---------- Data ----------
+function showError(error) {
+  $('#app-error').textContent = error ? error.message : '';
+}
+
+async function loadTasks() {
+  const { data, error } = await db.from('tasks').select('*').order('created_at', { ascending: false });
+  showError(error);
+  if (!error) { tasks = data; render(); }
+}
+
+$('#new-task').onsubmit = async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const fd = Object.fromEntries(new FormData(form));
+  const row = { title: fd.title.trim(), priority: fd.priority, due_date: fd.due_date || null };
+  if (!row.title) return;
+  const { data, error } = await db.from('tasks').insert(row).select().single();
+  showError(error);
+  if (!error) {
+    tasks.unshift(data);
+    form.reset();
+    form.priority.value = 'medium';
+    render();
+  }
+};
+
+async function updateTask(id, changes) {
+  const { data, error } = await db.from('tasks').update(changes).eq('id', id).select().single();
+  showError(error);
+  if (!error) { tasks = tasks.map((t) => (t.id === id ? data : t)); render(); }
+}
+
+async function deleteTask(id) {
+  if (!confirm('Delete this task?')) return;
+  const { error } = await db.from('tasks').delete().eq('id', id);
+  showError(error);
+  if (!error) { tasks = tasks.filter((t) => t.id !== id); render(); }
+}
+
+// ---------- UI ----------
+$('#filters').onclick = (e) => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  filter = btn.dataset.filter;
+  document.querySelectorAll('#filters button').forEach((b) => b.setAttribute('aria-pressed', b === btn));
+  render();
+};
+$('#sort').onchange = render;
+
+function visibleTasks() {
+  const list = tasks.filter((t) => filter === 'all' || t.status === filter);
+  const sort = $('#sort').value;
+  if (sort === 'due') list.sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999'));
+  if (sort === 'priority') list.sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]);
+  return list;
+}
+
+function el(tag, props = {}, ...children) {
+  const node = Object.assign(document.createElement(tag), props);
+  node.append(...children.filter((c) => c != null));
+  return node;
+}
+
+function formatDue(due) {
+  const today = new Date().toISOString().slice(0, 10);
+  const label = new Date(due + 'T00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return { label: due === today ? 'Today' : label, overdue: due < today };
+}
+
+function render() {
+  const list = $('#list');
+  list.replaceChildren();
+  const items = visibleTasks();
+  if (!items.length) {
+    list.append(el('li', { className: 'empty', textContent: tasks.length ? 'No tasks in this view.' : 'No tasks yet — add one above.' }));
+    return;
+  }
+  for (const t of items) list.append(renderTask(t));
+}
+
+function renderTask(t) {
+  const done = t.status === 'done';
+
+  const check = el('input', { type: 'checkbox', checked: done, title: 'Mark done' });
+  check.onchange = () => updateTask(t.id, { status: check.checked ? 'done' : 'todo' });
+
+  const title = el('div', { className: 'title', textContent: t.title, title: 'Double-click to rename' });
+  title.ondblclick = () => {
+    const input = el('input', { value: t.title, maxLength: 200 });
+    input.style.width = '100%';
+    const save = () => {
+      const v = input.value.trim();
+      if (v && v !== t.title) updateTask(t.id, { title: v }); else render();
+    };
+    input.onblur = save;
+    input.onkeydown = (e) => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') { input.onblur = null; render(); } };
+    title.replaceWith(input);
+    input.focus();
+  };
+
+  const status = el('select', { ariaLabel: 'Status' },
+    ...Object.entries(STATUS_LABELS).map(([v, l]) => el('option', { value: v, textContent: l, selected: v === t.status })));
+  status.onchange = () => updateTask(t.id, { status: status.value });
+
+  const priority = el('span', { className: 'pill' },
+    el('span', { className: 'dot' }), t.priority[0].toUpperCase() + t.priority.slice(1));
+  priority.firstChild.style.background = `var(--${t.priority})`;
+
+  let due = null;
+  if (t.due_date) {
+    const { label, overdue } = formatDue(t.due_date);
+    due = el('span', { className: overdue && !done ? 'overdue' : '', textContent: 'Due ' + label });
+  }
+
+  const notesView = t.notes ? el('div', { className: 'notes', textContent: t.notes }) : null;
+
+  const notesBtn = el('button', { textContent: t.notes ? 'Notes' : '+ Notes' });
+  const delBtn = el('button', { textContent: 'Delete' });
+  delBtn.onclick = () => deleteTask(t.id);
+
+  const body = el('div', {}, title, el('div', { className: 'meta' }, status, priority, due), notesView);
+
+  notesBtn.onclick = () => {
+    if (body.querySelector('textarea')) return;
+    const ta = el('textarea', { value: t.notes || '', placeholder: 'Notes…' });
+    ta.onblur = () => {
+      const v = ta.value.trim() || null;
+      if (v !== (t.notes || null)) updateTask(t.id, { notes: v }); else render();
+    };
+    notesView?.remove();
+    body.append(ta);
+    ta.focus();
+  };
+
+  return el('li', { className: 'card task' + (done ? ' done' : '') },
+    check, body, el('div', { className: 'actions' }, notesBtn, delBtn));
+}
+
+setAuthMode(false);
+</script>
+</body>
+</html>
