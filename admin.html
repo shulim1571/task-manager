@@ -60,6 +60,14 @@
   .notes { color: var(--muted); font-size: 13px; white-space: pre-wrap; margin-top: 2px; }
   .done-title { text-decoration: line-through; color: var(--muted); }
   .you { color: var(--muted); font-size: 12px; }
+  .changes { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+  .changes .field { color: var(--muted); }
+  .changes .old { text-decoration: line-through; color: var(--muted); }
+  .action { font-weight: 600; white-space: nowrap; }
+  .action.deleted { color: var(--danger); }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 2px 4px 2px 10px; border-radius: 999px; border: 1px solid var(--accent); }
+  .chip button { border: none; background: none; padding: 0 6px; font-size: 15px; line-height: 1; color: var(--muted); }
+  td.when { white-space: nowrap; color: var(--muted); font-size: 13px; }
 
   .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
   .row .grow { flex: 1 1 200px; }
@@ -153,6 +161,28 @@
         </table>
       </div>
     </section>
+
+    <section class="card" id="activity-section">
+      <h2>Activity</h2>
+      <p class="hint">Who changed what, and when. Use a task's History button to see just that task.</p>
+      <div class="row">
+        <span class="chip" id="history-chip" hidden><span id="history-chip-text"></span><button id="history-chip-clear" title="Show all activity" aria-label="Show all activity">×</button></span>
+        <select id="history-person" aria-label="Task owner"></select>
+        <select id="history-action" aria-label="Change type">
+          <option value="">All changes</option>
+          <option value="created">Created</option>
+          <option value="updated">Updated</option>
+          <option value="deleted">Deleted</option>
+        </select>
+        <span class="muted" id="history-count"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>When</th><th>Who</th><th>Task</th><th>Owner</th><th>What changed</th></tr></thead>
+          <tbody id="history"></tbody>
+        </table>
+      </div>
+    </section>
   </main>
 
 </div>
@@ -174,6 +204,9 @@ let myLevel = null;   // 'super_admin' | 'manager'
 let people = [];      // from list_people()
 let tasks = [];       // tasks in scope
 let editingId = null; // task row in edit mode
+let history = [];     // recent task_history entries in scope
+let historyTask = null; // { id, title } when showing one task's history
+const HISTORY_LIMIT = 300;
 
 function el(tag, props = {}, ...children) {
   const node = Object.assign(document.createElement(tag), props);
@@ -231,17 +264,27 @@ async function start() {
 }
 
 async function load() {
-  const [peopleRes, taskRes] = await Promise.all([
+  let historyQuery = db.from('task_history').select('*').order('changed_at', { ascending: false }).limit(HISTORY_LIMIT);
+  if (historyTask) historyQuery = historyQuery.eq('task_id', historyTask.id);
+  const [peopleRes, taskRes, historyRes] = await Promise.all([
     db.rpc('list_people'),
     db.from('tasks').select('*').order('created_at', { ascending: false }),
+    historyQuery,
   ]);
-  if (showError(peopleRes.error || taskRes.error)) return;
+  if (showError(peopleRes.error || taskRes.error || historyRes.error)) return;
   people = peopleRes.data;
   const inScope = new Set(scopePeople().map((p) => p.id));
   tasks = taskRes.data.filter((t) => inScope.has(t.user_id));
+  history = historyRes.data.filter((h) => inScope.has(h.task_owner));
   editingId = null;
   render();
 }
+
+function showHistory(task) {
+  historyTask = task ? { id: task.id, title: task.title } : null;
+  load().then(() => { if (task) $('#activity-section').scrollIntoView({ behavior: 'smooth' }); });
+}
+$('#history-chip-clear').onclick = () => showHistory(null);
 
 $('#refresh').onclick = load;
 
@@ -304,6 +347,7 @@ async function deleteTask(t) {
 
 // ---------- Render ----------
 ['#search', '#person-filter', '#status-filter', '#sort'].forEach((s) => $(s).addEventListener('input', renderTasks));
+['#history-person', '#history-action'].forEach((s) => $(s).addEventListener('input', renderHistory));
 
 function stats(personId) {
   const own = tasks.filter((t) => t.user_id === personId);
@@ -336,9 +380,13 @@ function render() {
   const assignSel = $('#new-task').user_id;
   const keepAssign = assignSel.value;
   assignSel.replaceChildren(...options([['', picks.length ? 'Assign to…' : 'No one to assign to'], ...picks], keepAssign));
+  const historySel = $('#history-person');
+  const keepHistory = historySel.value;
+  historySel.replaceChildren(...options([['', 'Everyone'], ...picks], keepHistory));
 
   if (myLevel === 'super_admin') renderPeople(); else renderTeam();
   renderTasks();
+  renderHistory();
 }
 
 function renderPeople() {
@@ -429,6 +477,8 @@ function renderTaskRow(t) {
 
   const edit = el('button', { textContent: 'Edit' });
   edit.onclick = () => { editingId = t.id; renderTasks(); };
+  const hist = el('button', { textContent: 'History' });
+  hist.onclick = () => showHistory(t);
   const del = el('button', { className: 'danger', textContent: 'Delete' });
   del.onclick = () => deleteTask(t);
 
@@ -439,7 +489,54 @@ function renderTaskRow(t) {
     el('td', {}, status),
     el('td', {}, priority),
     el('td', { className: isOverdue(t) ? 'overdue' : '', textContent: t.due_date ? fmtDate(t.due_date) : '—' }),
-    el('td', {}, el('div', { className: 'actions' }, edit, del)));
+    el('td', {}, el('div', { className: 'actions' }, edit, hist, del)));
+}
+
+// ---------- History ----------
+const FIELD_LABELS = { title: 'Title', notes: 'Notes', status: 'Status', priority: 'Priority', due_date: 'Due date', assigned_to: 'Assigned to' };
+
+function fieldValue(field, value) {
+  if (value == null || value === '') return 'none';
+  if (field === 'status') return STATUS_LABELS[value] || value;
+  if (field === 'priority') return PRIORITY_LABELS[value] || value;
+  if (field === 'due_date') return fmtDate(value);
+  const text = String(value);
+  return text.length > 80 ? text.slice(0, 80) + '…' : text;
+}
+
+function describeChanges(h) {
+  if (h.action === 'deleted') return el('span', { className: 'muted', textContent: 'Task deleted' });
+  if (h.action === 'created') {
+    return el('ul', { className: 'changes' }, ...Object.entries(h.changes).map(([field, value]) =>
+      el('li', {}, el('span', { className: 'field', textContent: FIELD_LABELS[field] + ': ' }), fieldValue(field, value))));
+  }
+  return el('ul', { className: 'changes' }, ...Object.entries(h.changes).map(([field, { old, new: now }]) =>
+    el('li', {},
+      el('span', { className: 'field', textContent: FIELD_LABELS[field] + ': ' }),
+      el('span', { className: 'old', textContent: fieldValue(field, old) }), ' → ', fieldValue(field, now))));
+}
+
+function renderHistory() {
+  $('#history-chip').hidden = !historyTask;
+  $('#history-person').hidden = !!historyTask;
+  if (historyTask) $('#history-chip-text').textContent = `History of "${historyTask.title}"`;
+
+  const person = historyTask ? '' : $('#history-person').value;
+  const action = $('#history-action').value;
+  const list = history.filter((h) => (!person || h.task_owner === person) && (!action || h.action === action));
+
+  const capped = !historyTask && history.length >= HISTORY_LIMIT;
+  $('#history-count').textContent = `${list.length} change${list.length === 1 ? '' : 's'}${capped ? ` (latest ${HISTORY_LIMIT})` : ''}`;
+  $('#history').replaceChildren(...(list.length ? list.map((h) => {
+    const when = new Date(h.changed_at).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+    const actionLabel = el('span', { className: 'action ' + h.action, textContent: h.action[0].toUpperCase() + h.action.slice(1) });
+    return el('tr', {},
+      el('td', { className: 'when', textContent: when }),
+      el('td', { textContent: h.changed_by_email || 'System' }),
+      el('td', {}, actionLabel, ' ', h.task_title),
+      el('td', { textContent: emailOf(h.task_owner) }),
+      el('td', {}, describeChanges(h)));
+  }) : [el('tr', {}, el('td', { colSpan: 5, className: 'muted', textContent: 'No changes recorded yet.' }))]));
 }
 
 function renderEditRow(t) {
