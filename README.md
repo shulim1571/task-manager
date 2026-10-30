@@ -2,7 +2,7 @@
 
 A simple per-user task manager backed by Supabase (auth + Postgres with row-level security).
 
-Live: https://shulim1571.github.io/task-manager/
+Live: https://taskman.trubase.org/ (GitHub Pages custom domain: a `taskman` CNAME record in trubase.org's DNS points to `shulim1571.github.io`, and the `CNAME` file in this repo names the domain).
 
 - `index.html` — the whole app (vanilla JS + supabase-js from CDN)
 - `admin.html` — dashboard for managers and super admins (adapts to the signed-in level)

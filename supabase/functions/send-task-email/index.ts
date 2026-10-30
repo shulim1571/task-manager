@@ -2,7 +2,7 @@
 // Secrets (Supabase > Edge Functions > Secrets): MS_TENANT_ID, MS_CLIENT_ID, MS_CLIENT_SECRET, MS_SENDER.
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
 
-const APP_URL = 'https://shulim1571.github.io/task-manager/';
+const APP_URL = 'https://taskman.trubase.org/';
 const HOURLY_LIMIT = 20;             // emails per user per hour
 const MAX_ATTACHMENT = 3 * 1024 * 1024; // Graph's limit for attachments sent inline with sendMail
 const STATUS_LABELS: Record<string, string> = { todo: 'To do', in_progress: 'In progress', done: 'Done' };
